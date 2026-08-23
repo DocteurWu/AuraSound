@@ -24,6 +24,8 @@ app/build/
 android/app/build/
 android/.gradle/
 *.apk
+!AuraSound.apk
+!AuraSound-v2.5.apk
 *.aab
 local.properties
 .idea/
