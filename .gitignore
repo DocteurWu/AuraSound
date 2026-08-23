@@ -1,0 +1,46 @@
+# Node & Frontend
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Donnees personnelles & medias (ne jamais publier)
+backend/data/
+backend/uploads/
+downloads/
+*.db
+*.db-shm
+*.db-wal
+test.mp3
+.env
+.env.*
+
+# Android build outputs
+.gradle/
+build/
+app/build/
+android/app/build/
+android/.gradle/
+*.apk
+*.aab
+local.properties
+.idea/
+*.iml
+.cxx/
+
+# Cles de signature Android (securite critique)
+*.keystore
+*.jks
+keystore.properties
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+
+# Logs & temp
+*.log
+scratch/
+.system_generated/

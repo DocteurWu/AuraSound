@@ -1,0 +1,20 @@
+{
+  "appId": "com.aurasound.musicplayer",
+  "appName": "AuraSound",
+  "webDir": "dist",
+  "server": {
+    "cleartext": true,
+    "androidScheme": "http"
+  },
+  "android": {
+    "allowMixedContent": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 0,
+      "launchAutoHide": true,
+      "backgroundColor": "#08090d",
+      "showSpinner": false
+    }
+  }
+}
