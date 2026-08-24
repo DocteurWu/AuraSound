@@ -9,6 +9,9 @@ yarn-error.log*
 # Donnees personnelles & medias (ne jamais publier)
 backend/data/
 backend/uploads/
+backend_legacy/data/
+backend_legacy/uploads/
+backend_legacy/node_modules/
 downloads/
 *.db
 *.db-shm

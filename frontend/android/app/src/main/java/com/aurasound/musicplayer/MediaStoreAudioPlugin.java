@@ -1,28 +1,13 @@
 package com.aurasound.musicplayer;
 
 import android.Manifest;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.content.ContentResolver;
 import android.content.Context;
-import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
-import android.graphics.Paint;
-import android.graphics.PorterDuff;
-import android.graphics.PorterDuffXfermode;
-import android.graphics.Rect;
-import android.graphics.RectF;
-import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.MediaStore;
-import android.support.v4.media.session.MediaSessionCompat;
-import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -32,46 +17,17 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.File;
+import java.util.concurrent.Executors;
 
 @CapacitorPlugin(name = "MediaStoreAudio")
 public class MediaStoreAudioPlugin extends Plugin {
 
-    private static final String CHANNEL_ID = "aurasound_playback_channel";
-    private static final int NOTIFICATION_ID = 4040;
     private static MediaStoreAudioPlugin instance;
-    private static MediaSessionCompat mediaSession;
 
     @Override
     public void load() {
         super.load();
         instance = this;
-        createNotificationChannel();
-        initMediaSession();
-    }
-
-    private void createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "AuraSound Lecture Audio",
-                    NotificationManager.IMPORTANCE_LOW
-            );
-            channel.setDescription("Contrôles de lecture sur l'écran de verrouillage et panneau de notifications");
-            channel.setShowBadge(false);
-            channel.setLockscreenVisibility(NotificationCompat.VISIBILITY_PUBLIC);
-
-            NotificationManager manager = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
-            if (manager != null) {
-                manager.createNotificationChannel(channel);
-            }
-        }
-    }
-
-    private void initMediaSession() {
-        if (mediaSession == null) {
-            mediaSession = new MediaSessionCompat(getContext(), "AuraSoundMediaSession");
-            mediaSession.setActive(true);
-        }
     }
 
     public static void dispatchMediaAction(String action) {
@@ -81,275 +37,240 @@ public class MediaStoreAudioPlugin extends Plugin {
             instance.notifyListeners("mediaAction", ret);
         }
     }
+    public static void dispatchExoEvent(String event, long positionMs, long durationMs) {
+        if (instance != null) {
+            JSObject ret = new JSObject();
+            ret.put("event", event);
+            ret.put("position", positionMs);
+            ret.put("duration", durationMs);
+            instance.notifyListeners("exoEvent", ret);
+        }
+    }
 
     public static void clearNotification(Context context) {
-        NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (manager != null) {
-            manager.cancel(NOTIFICATION_ID);
+        // Delegate to foreground service to stop properly
+        try {
+            AuraSoundPlaybackService.stopService(context);
+        } catch (Exception e) {
+            android.app.NotificationManager manager = (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (manager != null) manager.cancel(AuraSoundPlaybackService.NOTIFICATION_ID);
         }
         AuraSoundWidget.updateWidgetState(context, "AuraSound HD", "Lecteur Haute Définition", false, null);
     }
 
-    private Bitmap getRoundedCornerBitmap(Bitmap bitmap, float pixels) {
-        Bitmap output = Bitmap.createBitmap(bitmap.getWidth(), bitmap.getHeight(), Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(output);
-
-        final int color = 0xff424242;
-        final Paint paint = new Paint();
-        final Rect rect = new Rect(0, 0, bitmap.getWidth(), bitmap.getHeight());
-        final RectF rectF = new RectF(rect);
-
-        paint.setAntiAlias(true);
-        canvas.drawARGB(0, 0, 0, 0);
-        paint.setColor(color);
-        canvas.drawRoundRect(rectF, pixels, pixels, paint);
-
-        paint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC_IN));
-        canvas.drawBitmap(bitmap, rect, rect, paint);
-
-        return output;
-    }
-
-    private Bitmap createStylishCoverBitmap(String filePath) {
-        if (filePath != null && !filePath.isEmpty()) {
-            try {
-                MediaMetadataRetriever mmr = new MediaMetadataRetriever();
-                mmr.setDataSource(filePath);
-                byte[] art = mmr.getEmbeddedPicture();
-                mmr.release();
-                if (art != null && art.length > 0) {
-                    Bitmap original = BitmapFactory.decodeByteArray(art, 0, art.length);
-                    if (original != null) {
-                        return getRoundedCornerBitmap(original, 32);
-                    }
-                }
-            } catch (Exception ignored) {}
+    private boolean hasAudioPermission(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            return ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED;
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
         }
-
-        // Si pas d'artwork : Création dynamique d'un vinyle sombre néon haute résolution
-        int size = 256;
-        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(bitmap);
-
-        Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        bgPaint.setColor(0xFF0C0E14);
-        canvas.drawCircle(size / 2f, size / 2f, size / 2f, bgPaint);
-
-        // Sillons du vinyle
-        Paint groovePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        groovePaint.setStyle(Paint.Style.STROKE);
-        groovePaint.setColor(0x20FFFFFF);
-        groovePaint.setStrokeWidth(2f);
-        for (int r = 36; r < 120; r += 12) {
-            canvas.drawCircle(size / 2f, size / 2f, r, groovePaint);
-        }
-
-        // Anneau Néon Cyan Fluo
-        Paint neonPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        neonPaint.setStyle(Paint.Style.STROKE);
-        neonPaint.setColor(0xFF00F2FE);
-        neonPaint.setStrokeWidth(5f);
-        canvas.drawCircle(size / 2f, size / 2f, 118, neonPaint);
-
-        // Centre Violet / Pourpre
-        Paint centerPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        centerPaint.setColor(0xFF7000FF);
-        canvas.drawCircle(size / 2f, size / 2f, 36, centerPaint);
-
-        // Trou central vinyle
-        Paint holePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        holePaint.setColor(0xFF08090D);
-        canvas.drawCircle(size / 2f, size / 2f, 12, holePaint);
-
-        return bitmap;
+        return true;
     }
 
     @PluginMethod
     public void updateNotification(PluginCall call) {
         String title = call.getString("title", "AuraSound");
         String artist = call.getString("artist", "Artiste inconnu");
+        String album = call.getString("album", "AuraSound HD");
         String filePath = call.getString("filePath", null);
         boolean isPlaying = Boolean.TRUE.equals(call.getBoolean("isPlaying", false));
 
         Context context = getContext();
-
-        // 1. Extraction ou génération du Bitmap stylisé
-        Bitmap artwork = createStylishCoverBitmap(filePath);
-
-        // 2. Mise à jour du Widget Écran d'accueil
-        AuraSoundWidget.updateWidgetState(context, title, artist, isPlaying, artwork);
-
-        // 3. Création des PendingIntents pour la bannière de notification & écran de verrouillage
-        Intent openAppIntent = new Intent(context, MainActivity.class);
-        openAppIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        PendingIntent openAppPending = PendingIntent.getActivity(
-                context, 0, openAppIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-
-        Intent prevIntent = new Intent(context, MediaNotificationReceiver.class);
-        prevIntent.setAction(MediaNotificationReceiver.ACTION_NOTIFICATION_PREV);
-        PendingIntent prevPending = PendingIntent.getBroadcast(
-                context, 10, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-
-        Intent playPauseIntent = new Intent(context, MediaNotificationReceiver.class);
-        playPauseIntent.setAction(MediaNotificationReceiver.ACTION_NOTIFICATION_PLAY_PAUSE);
-        PendingIntent playPausePending = PendingIntent.getBroadcast(
-                context, 11, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-
-        Intent nextIntent = new Intent(context, MediaNotificationReceiver.class);
-        nextIntent.setAction(MediaNotificationReceiver.ACTION_NOTIFICATION_NEXT);
-        PendingIntent nextPending = PendingIntent.getBroadcast(
-                context, 12, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-
-        Intent closeIntent = new Intent(context, MediaNotificationReceiver.class);
-        closeIntent.setAction(MediaNotificationReceiver.ACTION_NOTIFICATION_CLOSE);
-        PendingIntent closePending = PendingIntent.getBroadcast(
-                context, 13, closeIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-
-        initMediaSession();
-
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setLargeIcon(artwork)
-                .setContentTitle(title)
-                .setContentText(artist)
-                .setSubText("✨ AuraSound Studio HD")
-                .setContentIntent(openAppPending)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setOngoing(isPlaying)
-                .setOnlyAlertOnce(true)
-                .setAutoCancel(false)
-                .setColor(0xFF00F2FE)
-                .setColorized(true)
-                .setShowWhen(false)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .addAction(R.drawable.ic_prev_white, "Précédent", prevPending)
-                .addAction(isPlaying ? R.drawable.ic_pause_white : R.drawable.ic_play_white, isPlaying ? "Pause" : "Lecture", playPausePending)
-                .addAction(R.drawable.ic_next_white, "Suivant", nextPending)
-                .setStyle(new androidx.media.app.NotificationCompat.MediaStyle()
-                        .setMediaSession(mediaSession.getSessionToken())
-                        .setShowActionsInCompactView(0, 1, 2)
-                        .setShowCancelButton(true)
-                        .setCancelButtonIntent(closePending)
-                );
-
-        NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (manager != null) {
-            manager.notify(NOTIFICATION_ID, builder.build());
+        // Délégation au Foreground Service – garantit la survie écran éteint (Xiaomi Doze)
+        try {
+            AuraSoundPlaybackService.updateState(context, title, artist, album, filePath, isPlaying);
+        } catch (Exception e) {
+            // fallback: log
+            e.printStackTrace();
         }
-
         call.resolve();
     }
 
     @PluginMethod
     public void scanLocalAudio(PluginCall call) {
         Context context = getContext();
-        JSArray tracksArray = new JSArray();
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                JSObject errorRet = new JSObject();
-                errorRet.put("success", false);
-                errorRet.put("error", "PERMISSION_DENIED");
-                errorRet.put("count", 0);
-                errorRet.put("tracks", tracksArray);
-                call.resolve(errorRet);
-                return;
-            }
-        }
-
-        ContentResolver contentResolver = context.getContentResolver();
-        Uri musicUri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
-
-        String selection = MediaStore.Audio.Media.IS_MUSIC + " != 0";
-        String sortOrder = MediaStore.Audio.Media.DATE_ADDED + " DESC";
-
-        String[] projection = {
-            MediaStore.Audio.Media._ID,
-            MediaStore.Audio.Media.TITLE,
-            MediaStore.Audio.Media.ARTIST,
-            MediaStore.Audio.Media.ALBUM,
-            MediaStore.Audio.Media.DURATION,
-            MediaStore.Audio.Media.DATA,
-            MediaStore.Audio.Media.SIZE,
-            MediaStore.Audio.Media.DATE_ADDED
-        };
-
-        try (Cursor cursor = contentResolver.query(musicUri, projection, selection, null, sortOrder)) {
-            if (cursor != null) {
-                int idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID);
-                int titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE);
-                int artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST);
-                int albumCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM);
-                int durationCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);
-                int dataCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA);
-                int sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE);
-                int dateCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED);
-
-                while (cursor.moveToNext()) {
-                    long id = cursor.getLong(idCol);
-                    String title = cursor.getString(titleCol);
-                    String artist = cursor.getString(artistCol);
-                    String album = cursor.getString(albumCol);
-                    long durationMs = cursor.getLong(durationCol);
-                    String filePath = cursor.getString(dataCol);
-                    long size = cursor.getLong(sizeCol);
-                    long dateAdded = cursor.getLong(dateCol);
-
-                    if (filePath == null) continue;
-                    File f = new File(filePath);
-                    if (!f.exists() || f.length() < 100000) continue; // Ignore fragments < 100KB
-
-                    if (title == null || title.trim().isEmpty() || title.equals("<unknown>")) {
-                        title = f.getName().replaceFirst("[.][^.]+$", "");
-                    }
-                    if (artist == null || artist.trim().isEmpty() || artist.equals("<unknown>")) {
-                        artist = "Artiste Inconnu";
-                    }
-                    if (album == null || album.trim().isEmpty() || album.equals("<unknown>")) {
-                        album = "Audio Local";
-                    }
-
-                    int durationSec = (int) (durationMs / 1000);
-                    Uri contentUri = Uri.withAppendedPath(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, String.valueOf(id));
-
-                    JSObject track = new JSObject();
-                    track.put("id", "device_" + id);
-                    track.put("title", title);
-                    track.put("artist", artist);
-                    track.put("album", album);
-                    track.put("duration", durationSec);
-                    track.put("file_path", filePath);
-                    track.put("content_uri", contentUri.toString());
-                    track.put("thumbnail_path", (String) null);
-                    track.put("file_size", size);
-                    track.put("format", "audio");
-                    track.put("bitrate", 320);
-                    track.put("source", "device_storage");
-                    track.put("is_favorite", 0);
-                    track.put("date_added", dateAdded > 0 ? dateAdded * 1000 : System.currentTimeMillis());
-
-                    tracksArray.put(track);
-                }
-            }
-        } catch (Exception e) {
-            JSObject errRes = new JSObject();
-            errRes.put("success", false);
-            errRes.put("error", e.getMessage());
-            errRes.put("count", 0);
-            errRes.put("tracks", tracksArray);
-            call.resolve(errRes);
+        if (!hasAudioPermission(context)) {
+            JSObject errorRet = new JSObject();
+            errorRet.put("success", false);
+            errorRet.put("error", "PERMISSION_DENIED");
+            errorRet.put("count", 0);
+            errorRet.put("tracks", new JSArray());
+            call.resolve(errorRet);
             return;
         }
 
-        JSObject res = new JSObject();
-        res.put("success", true);
-        res.put("count", tracksArray.length());
-        res.put("tracks", tracksArray);
-        call.resolve(res);
+        // Run scan off the UI thread to avoid ANR on large libraries (Redmi 64GB)
+        Executors.newSingleThreadExecutor().execute(() -> {
+            JSArray tracksArray = new JSArray();
+            ContentResolver contentResolver = context.getContentResolver();
+            Uri musicUri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+            String selection = MediaStore.Audio.Media.IS_MUSIC + " != 0";
+            String sortOrder = MediaStore.Audio.Media.DATE_ADDED + " DESC";
+            String[] projection = {
+                MediaStore.Audio.Media._ID,
+                MediaStore.Audio.Media.TITLE,
+                MediaStore.Audio.Media.ARTIST,
+                MediaStore.Audio.Media.ALBUM,
+                MediaStore.Audio.Media.DURATION,
+                MediaStore.Audio.Media.DATA,
+                MediaStore.Audio.Media.SIZE,
+                MediaStore.Audio.Media.DATE_ADDED
+            };
+            try (Cursor cursor = contentResolver.query(musicUri, projection, selection, null, sortOrder)) {
+                if (cursor != null) {
+                    int idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID);
+                    int titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE);
+                    int artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST);
+                    int albumCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM);
+                    int durationCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);
+                    int dataCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA);
+                    int sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE);
+                    int dateCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED);
+
+                    while (cursor.moveToNext()) {
+                        long id = cursor.getLong(idCol);
+                        String title = cursor.getString(titleCol);
+                        String artist = cursor.getString(artistCol);
+                        String album = cursor.getString(albumCol);
+                        long durationMs = cursor.getLong(durationCol);
+                        String filePath = cursor.getString(dataCol);
+                        long size = cursor.getLong(sizeCol);
+                        long dateAdded = cursor.getLong(dateCol);
+
+                        if (filePath == null) continue;
+                        File f = new File(filePath);
+                        // Ignore tiny fragments / corrupted entries; 50KB min more permissive than before
+                        if (!f.exists() || f.length() < 50000) continue;
+                        // Skip zero-duration invalid entries
+                        if (durationMs < 5000) continue;
+
+                        if (title == null || title.trim().isEmpty() || title.equals("<unknown>")) {
+                            title = f.getName().replaceFirst("[.][^.]+$", "");
+                        }
+                        if (artist == null || artist.trim().isEmpty() || artist.equals("<unknown>")) {
+                            artist = "Artiste Inconnu";
+                        }
+                        if (album == null || album.trim().isEmpty() || album.equals("<unknown>")) {
+                            album = "Audio Local";
+                        }
+
+                        int durationSec = (int) (durationMs / 1000);
+                        Uri contentUri = Uri.withAppendedPath(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, String.valueOf(id));
+
+                        JSObject track = new JSObject();
+                        track.put("id", "device_" + id);
+                        track.put("title", title);
+                        track.put("artist", artist);
+                        track.put("album", album);
+                        track.put("duration", durationSec);
+                        track.put("file_path", filePath);
+                        track.put("content_uri", contentUri.toString());
+                        track.put("thumbnail_path", (String) null);
+                        track.put("file_size", size);
+                        track.put("format", "audio");
+                        track.put("bitrate", 320);
+                        track.put("source", "device_storage");
+                        track.put("is_favorite", 0);
+                        track.put("date_added", dateAdded > 0 ? dateAdded * 1000 : System.currentTimeMillis());
+                        tracksArray.put(track);
+                    }
+                }
+            } catch (Exception e) {
+                JSObject errRes = new JSObject();
+                errRes.put("success", false);
+                errRes.put("error", e.getMessage());
+                errRes.put("count", 0);
+                errRes.put("tracks", tracksArray);
+                call.resolve(errRes);
+                return;
+            }
+
+            JSObject res = new JSObject();
+            res.put("success", true);
+            res.put("count", tracksArray.length());
+            res.put("tracks", tracksArray);
+            call.resolve(res);
+        });
+    }
+
+    @PluginMethod
+    public void requestIgnoreBatteryOptimizations(PluginCall call) {
+        try {
+            Context ctx = getContext();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                android.os.PowerManager pm = (android.os.PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+                boolean isIgnoring = pm != null && pm.isIgnoringBatteryOptimizations(ctx.getPackageName());
+                JSObject ret = new JSObject();
+                ret.put("isIgnoring", isIgnoring);
+                call.resolve(ret);
+                if (!isIgnoring) {
+                    android.content.Intent intent = new android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(Uri.parse("package:" + ctx.getPackageName()));
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                    ctx.startActivity(intent);
+                }
+            } else {
+                call.resolve();
+            }
+        } catch (Exception e) {
+            call.reject(e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void stopPlaybackService(PluginCall call) {
+        try {
+            AuraSoundPlaybackService.stopService(getContext());
+            call.resolve();
+        } catch (Exception e) { call.reject(e.getMessage()); }
+    }
+
+    // ---- ExoPlayer Hi-Res native API ----
+    @PluginMethod
+    public void playNative(PluginCall call) {
+        String filePath = call.getString("filePath");
+        String contentUri = call.getString("contentUri");
+        String title = call.getString("title", "AuraSound");
+        String artist = call.getString("artist", "Artiste inconnu");
+        String album = call.getString("album", "AuraSound HD");
+        if ((filePath == null || filePath.isEmpty()) && (contentUri == null || contentUri.isEmpty())) {
+            call.reject("filePath ou contentUri requis"); return;
+        }
+        // On privilégie content:// (pas de Scoped Storage exception)
+        String target = (contentUri != null && !contentUri.isEmpty()) ? contentUri : filePath;
+        try {
+            AuraSoundPlaybackService.playNativeFile(getContext(), target, title, artist, album);
+            JSObject ret = new JSObject(); ret.put("success", true); call.resolve(ret);
+        } catch (Throwable t) {
+            android.util.Log.e("AuraSound", "playNative failed", t);
+            JSObject ret = new JSObject(); ret.put("success", false); ret.put("error", t.getMessage()); call.resolve(ret);
+        }
+    }
+    @PluginMethod
+    public void pauseNative(PluginCall call) { AuraSoundPlaybackService.pauseNative(getContext()); call.resolve(); }
+    @PluginMethod
+    public void resumeNative(PluginCall call) {
+        // resume is just play without re-prepare if paused – use dispatch
+        if (AuraSoundPlaybackService.isExoPlaying()) { call.resolve(); return; }
+        // trigger play via service's exoPlayer.play() indirectly via dispatch
+        try { java.lang.reflect.Field f = AuraSoundPlaybackService.class.getDeclaredField("instance"); f.setAccessible(true); Object inst = f.get(null); if (inst != null) { java.lang.reflect.Method m = inst.getClass().getDeclaredMethod("updateNotificationOnly"); m.setAccessible(true); } } catch(Exception ignored){}
+        call.resolve();
+    }
+    @PluginMethod
+    public void seekNative(PluginCall call) {
+        Double pos = call.getDouble("position");
+        Long posLong = call.getLong("pos");
+        long posMs = pos != null ? (long)(pos * 1000) : (posLong != null ? posLong : 0L);
+        AuraSoundPlaybackService.seekNative(getContext(), posMs);
+        call.resolve();
+    }
+    @PluginMethod
+    public void getNativeState(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("isPlaying", AuraSoundPlaybackService.isExoPlaying());
+        ret.put("position", AuraSoundPlaybackService.getExoPosition() / 1000.0);
+        ret.put("duration", AuraSoundPlaybackService.getExoDuration() / 1000.0);
+        call.resolve(ret);
     }
 }

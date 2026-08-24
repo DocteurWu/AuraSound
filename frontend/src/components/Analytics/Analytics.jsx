@@ -74,7 +74,8 @@ export default function Analytics({ theme }) {
   };
 
   const handleExport = (format) => {
-    window.open(api.getExportUrl(format), '_blank');
+    const ok = api.downloadTelemetryExport ? api.downloadTelemetryExport(format) : false;
+    if (!ok) alert('Export impossible');
   };
 
   return (

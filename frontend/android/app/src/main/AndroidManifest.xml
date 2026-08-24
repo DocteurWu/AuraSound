@@ -62,6 +62,13 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/aurasound_widget_info" />
         </receiver>
+
+        <!-- Foreground Service for uninterrupted playback (Android 8+ / Xiaomi Doze) -->
+        <service
+            android:name=".AuraSoundPlaybackService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 
     <!-- Permissions -->
